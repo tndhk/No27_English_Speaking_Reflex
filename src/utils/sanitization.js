@@ -7,6 +7,7 @@ const MAX_PROMPT_LENGTH = 200;
 
 /**
  * Sanitize user input to prevent XSS and injection attacks
+ * Uses whitelist approach - only allows safe characters
  * @param {string} input - The user input to sanitize
  * @param {number} maxLength - Maximum allowed length
  * @returns {string} Sanitized input
@@ -20,15 +21,19 @@ export const sanitizeInput = (input, maxLength = MAX_INPUT_LENGTH) => {
     // Limit length
     sanitized = sanitized.substring(0, maxLength);
 
-    // Remove potentially dangerous characters
-    // Allow alphanumeric, spaces, and common punctuation
-    sanitized = sanitized.replace(/[<>{}[\]\\\/]/g, '');
+    // Whitelist approach: Only allow alphanumeric, spaces, and safe punctuation
+    // Allows: a-z, A-Z, 0-9, spaces, hyphens, periods, commas, apostrophes, parentheses
+    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-.,()\']/g, '');
+
+    // Collapse multiple spaces
+    sanitized = sanitized.replace(/\s+/g, ' ').trim();
 
     return sanitized;
 };
 
 /**
  * Sanitize text for use in AI prompts to prevent prompt injection
+ * Uses strict whitelist and removes instruction-like patterns
  * @param {string} input - The user input to sanitize for prompts
  * @returns {string} Sanitized input safe for prompts
  */
@@ -38,15 +43,30 @@ export const sanitizeForPrompt = (input) => {
     // First apply basic sanitization
     let sanitized = sanitizeInput(input, MAX_PROMPT_LENGTH);
 
-    // Remove or escape characters that could be used for prompt injection
-    // Remove newlines, quotes, and instruction-like patterns
-    sanitized = sanitized
-        .replace(/[\n\r]/g, ' ')
-        .replace(/["'`]/g, '')
-        .replace(/\b(ignore|disregard|forget|system|instruction|prompt|override)\b/gi, '');
+    // Additional strict filtering for prompts
+    // Remove any character sequences that look like instructions
+    const instructionPatterns = [
+        /\b(ignore|disregard|forget|system|instruction|prompt|override|previous|new|now|instead|act\s+as|you\s+are|pretend|role)\b/gi,
+        /:{2,}/g,  // Multiple colons (::)
+        /={2,}/g,  // Multiple equals (==)
+        /-{3,}/g,  // Multiple hyphens (---)
+        /\.\s*[A-Z]/g,  // Sentence boundaries that might be used to inject new instructions
+    ];
+
+    instructionPatterns.forEach(pattern => {
+        sanitized = sanitized.replace(pattern, ' ');
+    });
+
+    // Remove newlines and control characters
+    sanitized = sanitized.replace(/[\n\r\t\0\x00-\x1f\x7f]/g, ' ');
 
     // Collapse multiple spaces
     sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+    // Final length check
+    if (sanitized.length < 2) {
+        return '';
+    }
 
     return sanitized;
 };
