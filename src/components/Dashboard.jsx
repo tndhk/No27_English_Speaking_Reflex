@@ -1,6 +1,7 @@
 import React from 'react';
 import { Flame, Trophy, Play } from 'lucide-react';
 import { PROFICIENCY_LEVELS } from '../constants/tags';
+import { sanitizeInput } from '../utils/sanitization';
 
 export const LEVELS = [
     {
@@ -64,17 +65,19 @@ const Dashboard = ({ profile, setProfile, onStart, stats, user }) => {
                     <input
                         type="text"
                         value={profile.job}
-                        onChange={e => setProfile({ ...profile, job: e.target.value })}
+                        onChange={e => setProfile({ ...profile, job: sanitizeInput(e.target.value) })}
                         className="w-full bg-transparent text-center text-white font-bold placeholder-white/30 py-3 focus:outline-none text-sm"
                         placeholder="Your Job (e.g. Designer)"
+                        maxLength={100}
                     />
                     <div className="h-px w-full bg-white/10"></div>
                     <input
                         type="text"
                         value={profile.interests}
-                        onChange={e => setProfile({ ...profile, interests: e.target.value })}
+                        onChange={e => setProfile({ ...profile, interests: sanitizeInput(e.target.value) })}
                         className="w-full bg-transparent text-center text-white font-bold placeholder-white/30 py-3 focus:outline-none text-sm"
                         placeholder="Your Interests (e.g. Ramen)"
+                        maxLength={100}
                     />
                 </div>
 

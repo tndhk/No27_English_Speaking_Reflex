@@ -3,6 +3,7 @@ import { Timestamp, doc, setDoc } from 'firebase/firestore';
 import { db, appId } from '../firebase';
 import { PROFICIENCY_LEVELS, normalizeJobRole, normalizeInterest, getTagsForPrompt } from '../constants/tags';
 import { generateMockDrill } from '../utils';
+import { sanitizeForPrompt } from '../utils/sanitization';
 
 export function useGemini() {
     const [loading, setLoading] = useState(false);
@@ -16,11 +17,22 @@ export function useGemini() {
 
         try {
             if (apiKey) {
-                console.log("Debug: Attempting generation with Gemini...");
+                if (import.meta.env.DEV) {
+                    console.log("Debug: Attempting generation with Gemini...");
+                }
                 const selectedLevel = PROFICIENCY_LEVELS[profile.levelId];
                 const tagsInfo = getTagsForPrompt();
 
-                const systemPrompt = `Generate ${count} pairs of Japanese/English sentences for a ${profile.job} interested in ${profile.interests}.
+                // Sanitize user inputs to prevent prompt injection
+                const sanitizedJob = sanitizeForPrompt(profile.job);
+                const sanitizedInterests = sanitizeForPrompt(profile.interests);
+
+                // Validate sanitized inputs
+                if (!sanitizedJob || !sanitizedInterests) {
+                    throw new Error("Invalid job or interests input");
+                }
+
+                const systemPrompt = `Generate ${count} pairs of Japanese/English sentences for a ${sanitizedJob} interested in ${sanitizedInterests}.
 Level: ${selectedLevel.label}.
 Constraints: ${selectedLevel.promptInstruction}
 
@@ -30,7 +42,9 @@ IMPORTANT: For each pair, also provide these tags:
 
 Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammarPatterns" (array), "contexts" (array).`;
 
-                console.log("Debug: Starting fetch to Gemini...");
+                if (import.meta.env.DEV) {
+                    console.log("Debug: Starting fetch to Gemini...");
+                }
                 const response = await fetch(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
                     {
@@ -44,23 +58,31 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
                     }
                 );
 
-                console.log("Debug: Fetch completed. Status:", response.status);
+                if (import.meta.env.DEV) {
+                    console.log("Debug: Fetch completed. Status:", response.status);
+                }
 
                 if (!response.ok) {
                     const text = await response.text();
-                    console.log("Debug: API Error Response Body:", text);
-                    throw new Error(`API Error: ${response.status} - ${text}`);
+                    if (import.meta.env.DEV) {
+                        console.log("Debug: API Error Response Body:", text);
+                    }
+                    throw new Error(`API Error: ${response.status}`);
                 }
 
                 const data = await response.json();
-                console.log("Debug: API Data received", data);
+                if (import.meta.env.DEV) {
+                    console.log("Debug: API Data received");
+                }
 
                 if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
                     throw new Error("Invalid API response format");
                 }
 
                 let rawText = data.candidates[0].content.parts[0].text;
-                console.log("Debug: Raw Gemini Text:", rawText);
+                if (import.meta.env.DEV) {
+                    console.log("Debug: Raw Gemini Text:", rawText);
+                }
 
                 // Clean up markdown code blocks if present
                 rawText = rawText.replace(/```json\n?|```/g, '').trim();
@@ -126,7 +148,9 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
                 }));
             }
         } catch (e) {
-            console.log("Debug: Gemini API ERROR CAUGHT:", e);
+            if (import.meta.env.DEV) {
+                console.log("Debug: Gemini API ERROR CAUGHT:", e);
+            }
             setError(e.message);
             // Fallback to mock data on error
             newDrills = await Promise.all(Array.from({ length: count }).map(async (_, i) => {
