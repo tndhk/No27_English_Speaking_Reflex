@@ -1,5 +1,8 @@
+-- Create flash_speaking schema
+CREATE SCHEMA IF NOT EXISTS flash_speaking;
+
 -- Create users table (extends Supabase auth.users)
-CREATE TABLE IF NOT EXISTS public.users (
+CREATE TABLE IF NOT EXISTS flash_speaking.users (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     job VARCHAR(100) NOT NULL DEFAULT '',
     interests VARCHAR(100) NOT NULL DEFAULT '',
@@ -9,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 -- Create content_pool table (shared content for all users)
-CREATE TABLE IF NOT EXISTS public.content_pool (
+CREATE TABLE IF NOT EXISTS flash_speaking.content_pool (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     jp TEXT NOT NULL,
     en TEXT NOT NULL,
@@ -26,10 +29,10 @@ CREATE TABLE IF NOT EXISTS public.content_pool (
 );
 
 -- Create user_drills table (tracks user's progress on each drill)
-CREATE TABLE IF NOT EXISTS public.user_drills (
+CREATE TABLE IF NOT EXISTS flash_speaking.user_drills (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    content_id UUID NOT NULL REFERENCES public.content_pool(id) ON DELETE CASCADE,
+    content_id UUID NOT NULL REFERENCES flash_speaking.content_pool(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_reviewed_at TIMESTAMP WITH TIME ZONE,
     next_review_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -39,13 +42,13 @@ CREATE TABLE IF NOT EXISTS public.user_drills (
 );
 
 -- Create indexes for performance
-CREATE INDEX idx_user_drills_user_id ON public.user_drills(user_id);
-CREATE INDEX idx_user_drills_next_review_at ON public.user_drills(user_id, next_review_at);
-CREATE INDEX idx_content_pool_level ON public.content_pool(level);
-CREATE INDEX idx_content_pool_generated_by ON public.content_pool(generated_by);
+CREATE INDEX idx_user_drills_user_id ON flash_speaking.user_drills(user_id);
+CREATE INDEX idx_user_drills_next_review_at ON flash_speaking.user_drills(user_id, next_review_at);
+CREATE INDEX idx_content_pool_level ON flash_speaking.content_pool(level);
+CREATE INDEX idx_content_pool_generated_by ON flash_speaking.content_pool(generated_by);
 
 -- Add updated_at trigger for users table
-CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+CREATE OR REPLACE FUNCTION flash_speaking.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
@@ -53,10 +56,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users
-    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON flash_speaking.users
+    FOR EACH ROW EXECUTE FUNCTION flash_speaking.update_updated_at_column();
 
 -- Enable real-time subscriptions
-ALTER TABLE public.content_pool REPLICA IDENTITY FULL;
-ALTER TABLE public.user_drills REPLICA IDENTITY FULL;
-ALTER TABLE public.users REPLICA IDENTITY FULL;
+ALTER TABLE flash_speaking.content_pool REPLICA IDENTITY FULL;
+ALTER TABLE flash_speaking.user_drills REPLICA IDENTITY FULL;
+ALTER TABLE flash_speaking.users REPLICA IDENTITY FULL;

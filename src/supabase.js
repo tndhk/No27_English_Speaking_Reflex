@@ -23,8 +23,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
 /**
  * Supabase client instance
  * Used for authentication, database queries, and real-time subscriptions
+ * Configured to use the flash_speaking schema
  */
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    db: {
+        schema: 'flash_speaking'
+    }
+});
 
 /**
  * Helper function to get current user session
