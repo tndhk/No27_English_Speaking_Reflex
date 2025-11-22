@@ -1,7 +1,7 @@
 import React from 'react';
-import { Volume2, Zap, Sparkles } from 'lucide-react';
+import { Volume2, Zap, Sparkles, ThumbsDown } from 'lucide-react';
 
-const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio }) => {
+const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio, onDownvote }) => {
     return (
         <div className="relative w-full max-w-sm aspect-[4/5] perspective-1000 group cursor-pointer" onClick={!isRevealed ? onReveal : undefined}>
             <div className={`w-full h-full transition-all duration-500 transform-style-3d ${isRevealed ? 'rotate-y-180' : ''}`}>
@@ -45,12 +45,23 @@ const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio }) => {
                             </button>
                         </div>
 
-                        <div className="w-full bg-slate-50 p-4 rounded-xl border border-slate-100 z-10">
-                            <div className="flex items-center gap-2 mb-1">
-                                <Sparkles size={14} className="text-amber-500" />
-                                <span className="text-xs font-bold text-slate-400 uppercase">Key Point</span>
+                        <div className="w-full flex flex-col gap-3 z-10">
+                            <div className="w-full bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Sparkles size={14} className="text-amber-500" />
+                                    <span className="text-xs font-bold text-slate-400 uppercase">Key Point</span>
+                                </div>
+                                <p className="text-sm font-medium text-slate-600">{drill.grammar}</p>
                             </div>
-                            <p className="text-sm font-medium text-slate-600">{drill.grammar}</p>
+                            {onDownvote && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onDownvote(); }}
+                                    className="w-full py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                                >
+                                    <ThumbsDown size={16} />
+                                    Not helpful
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

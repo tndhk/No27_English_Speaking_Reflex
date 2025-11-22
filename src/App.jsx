@@ -9,8 +9,8 @@ import { useGemini } from './hooks/useGemini';
 
 export default function App() {
     const { user, authStatus, authError } = useAuth();
-    const { stats, getDueDrills, saveDrillResult } = useDrills(user);
-    const { generateDrills } = useGemini();
+    const { stats, getDueDrills, saveDrillResult, assignContentToUser, recordDownvote } = useDrills(user);
+    const { generateAndSaveDrills } = useGemini();
 
     const [status, setStatus] = useState('dashboard'); // dashboard, loading, drill, complete
     const [profile, setProfile] = useState({
@@ -28,7 +28,7 @@ export default function App() {
         setStatus('loading');
 
         try {
-            // 1. Fetch all due reviews
+            // 1. Fetch all due reviews from contentPool
             const allDueReviews = await getDueDrills();
 
             // 2. Determine Queue Mix
@@ -47,7 +47,11 @@ export default function App() {
 
             // Only generate if we have remaining slots
             if (slotsRemaining > 0) {
-                newDrills = await generateDrills(slotsRemaining, profile);
+                newDrills = await generateAndSaveDrills(slotsRemaining, profile);
+                // Assign generated content to user
+                for (const drill of newDrills) {
+                    await assignContentToUser(drill.id);
+                }
             }
 
             const queue = [...reviewsToTake, ...newDrills];
@@ -169,6 +173,7 @@ export default function App() {
                             isRevealed={isRevealed}
                             onReveal={() => { setIsRevealed(true); playAudio(sessionQueue[currentIndex].en); }}
                             onPlayAudio={() => playAudio(sessionQueue[currentIndex].en)}
+                            onDownvote={() => recordDownvote(sessionQueue[currentIndex].id)}
                         />
 
                         {/* Action Buttons (Only visible after reveal) */}

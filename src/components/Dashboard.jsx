@@ -1,27 +1,28 @@
 import React from 'react';
 import { Flame, Trophy, Play } from 'lucide-react';
+import { PROFICIENCY_LEVELS } from '../constants/tags';
 
 export const LEVELS = [
     {
         id: 'beginner',
-        label: 'Beginner',
+        label: PROFICIENCY_LEVELS.beginner.label,
         subLabel: 'Basic / Travel',
         color: 'from-emerald-400 to-teal-300',
-        promptInstruction: 'Use simple sentence structures (SVO/SVOO). Focus on basic verbs and tenses. Target CEFR A2.'
+        promptInstruction: PROFICIENCY_LEVELS.beginner.promptInstruction
     },
     {
         id: 'intermediate',
-        label: 'Intermediate',
+        label: PROFICIENCY_LEVELS.intermediate.label,
         subLabel: 'Biz / Daily',
         color: 'from-blue-400 to-cyan-300',
-        promptInstruction: 'Use standard business English structures. Present Perfect, Passive, Modals. Target CEFR B1/B2.'
+        promptInstruction: PROFICIENCY_LEVELS.intermediate.promptInstruction
     },
     {
         id: 'advanced',
-        label: 'Advanced',
+        label: PROFICIENCY_LEVELS.advanced.label,
         subLabel: 'Native Like',
         color: 'from-purple-400 to-pink-300',
-        promptInstruction: 'Use sophisticated sentence structures. Subjunctive Mood, Idioms. Target CEFR C1.'
+        promptInstruction: PROFICIENCY_LEVELS.advanced.promptInstruction
     }
 ];
 
