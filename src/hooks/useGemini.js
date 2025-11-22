@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Timestamp } from 'firebase/firestore';
-import { PROFICIENCY_LEVELS, normalizeJobRole, normalizeInterest, getTagsForPrompt } from '../constants/tags';
+import { PROFICIENCY_LEVELS, normalizeJobRole, normalizeInterest } from '../constants/tags';
 import { generateMockDrill } from '../utils';
 import { sanitizeForPrompt } from '../utils/sanitization';
 import { saveContentToPool } from '../utils/contentPool';
@@ -8,7 +7,6 @@ import { saveContentToPool } from '../utils/contentPool';
 export function useGemini() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
     const generateAndSaveDrills = async (count, profile) => {
         setLoading(true);
@@ -16,171 +14,117 @@ export function useGemini() {
         let newDrills = [];
 
         try {
-            if (apiKey) {
-                if (import.meta.env.DEV) {
-                    console.log("Debug: Attempting generation with Gemini...");
-                }
-                const selectedLevel = PROFICIENCY_LEVELS[profile.levelId];
-                const tagsInfo = getTagsForPrompt();
+            // Sanitize user inputs to prevent prompt injection
+            const sanitizedJob = sanitizeForPrompt(profile.job);
+            const sanitizedInterests = sanitizeForPrompt(profile.interests);
 
-                // Sanitize user inputs to prevent prompt injection
-                const sanitizedJob = sanitizeForPrompt(profile.job);
-                const sanitizedInterests = sanitizeForPrompt(profile.interests);
+            // Validate sanitized inputs
+            if (!sanitizedJob || sanitizedJob.length < 2 || !sanitizedInterests || sanitizedInterests.length < 2) {
+                throw new Error("Please provide valid job title and interests (minimum 2 characters each)");
+            }
 
-                // Validate sanitized inputs
-                if (!sanitizedJob || !sanitizedInterests) {
-                    throw new Error("Invalid job or interests input");
-                }
+            if (import.meta.env.DEV) {
+                console.log("Requesting drills from backend API...");
+            }
 
-                const systemPrompt = `Generate ${count} pairs of Japanese/English sentences for a ${sanitizedJob} interested in ${sanitizedInterests}.
-Level: ${selectedLevel.label}.
-Constraints: ${selectedLevel.promptInstruction}
+            // Call backend API endpoint instead of Gemini directly
+            // This protects the API key and adds server-side rate limiting/validation
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-IMPORTANT: For each pair, also provide these tags:
-- grammarPatterns: array of 1-2 from [${tagsInfo.grammarPatterns.join(', ')}]
-- contexts: array of 1-2 from [${tagsInfo.contexts.join(', ')}]
-
-Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammarPatterns" (array), "contexts" (array).`;
-
-                if (import.meta.env.DEV) {
-                    console.log("Debug: Starting fetch to Gemini...");
-                }
-
-                // Set up AbortController for timeout (15 seconds max)
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-                let response;
-                try {
-                    response = await fetch(
-                        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{ parts: [{ text: "Generate." }] }],
-                                systemInstruction: { parts: [{ text: systemPrompt }] },
-                                generationConfig: { responseMimeType: "application/json" }
-                            }),
-                            signal: controller.signal
+            try {
+                const response = await fetch('/api/generate-drills', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        count,
+                        level: profile.levelId,
+                        profile: {
+                            job: sanitizedJob,
+                            interests: sanitizedInterests
                         }
-                    );
-                    clearTimeout(timeoutId);
+                    }),
+                    signal: controller.signal
+                });
 
-                    if (import.meta.env.DEV) {
-                        console.log("Debug: Fetch completed. Status:", response.status);
-                    }
-                } catch (fetchErr) {
-                    clearTimeout(timeoutId);
-                    if (fetchErr.name === 'AbortError') {
-                        throw new Error("API request timed out. Please try again.");
-                    }
-                    throw fetchErr;
-                }
+                clearTimeout(timeoutId);
 
                 if (!response.ok) {
-                    const text = await response.text();
-                    if (import.meta.env.DEV) {
-                        console.log("Debug: API Error Response Body:", text);
-                    }
-                    throw new Error(`API Error: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `API Error: ${response.status}`);
                 }
 
                 const data = await response.json();
-                if (import.meta.env.DEV) {
-                    console.log("Debug: API Data received");
+
+                if (!data.success || !Array.isArray(data.drills)) {
+                    throw new Error('Invalid response format from API');
                 }
 
-                if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-                    throw new Error("Invalid API response format");
-                }
-
-                let rawText = data.candidates[0].content.parts[0].text;
-                if (import.meta.env.DEV) {
-                    console.log("Debug: Raw Gemini Text:", rawText);
-                }
-
-                // Clean up markdown code blocks if present
-                rawText = rawText.replace(/```json\n?|```/g, '').trim();
-
-                const generated = JSON.parse(rawText);
-                newDrills = await Promise.all(generated.map(async (item) => {
-                    const contentId = `gen_${Date.now()}_${Math.random()}`;
+                // Save all drills to Supabase content pool and create local drill records
+                newDrills = await Promise.all(data.drills.map(async (drill) => {
                     const contentData = {
-                        jp: item.jp || item.japanese,
-                        en: item.en || item.english,
-                        level: profile.levelId,
-                        jobRoles: [normalizeJobRole(profile.job)],
-                        interests: [normalizeInterest(profile.interests)],
-                        grammarPatterns: item.grammarPatterns || [],
-                        contexts: item.contexts || [],
-                        created_at: Timestamp.now(),
-                        usageCount: 1,
-                        downvotes: 0,
-                        generatedBy: 'gemini'
+                        jp: drill.jp,
+                        en: drill.en,
+                        level: drill.level,
+                        job_roles: drill.job_roles || [],
+                        interests: drill.interests || [],
+                        grammar_patterns: drill.grammar_patterns || [],
+                        contexts: drill.contexts || [],
+                        created_at: drill.created_at,
+                        usage_count: drill.usage_count || 0,
+                        downvotes: drill.downvotes || 0,
+                        generated_by: drill.generated_by || 'gemini'
                     };
 
                     // Save to contentPool using reusable utility
                     try {
-                        await saveContentToPool(contentId, contentData);
+                        await saveContentToPool(drill.id, contentData);
                     } catch (e) {
-                        console.error("Error saving generated content:", contentId, e);
+                        console.error("Error saving generated content:", drill.id, e);
                     }
 
                     return {
                         ...contentData,
-                        id: contentId,
+                        id: drill.id,
                         type: 'new'
                     };
                 }));
-            } else {
-                // No API key, fallback to mock
-                newDrills = await Promise.all(Array.from({ length: count }).map(async (_, i) => {
-                    const contentId = `mock_${Date.now()}_${i}`;
-                    const mockData = generateMockDrill(profile, i);
-                    const contentData = {
-                        ...mockData,
-                        level: profile.levelId,
-                        jobRoles: [normalizeJobRole(profile.job)],
-                        interests: [normalizeInterest(profile.interests)],
-                        grammarPatterns: [],
-                        contexts: [],
-                        created_at: Timestamp.now(),
-                        usageCount: 1,
-                        downvotes: 0,
-                        generatedBy: 'mock'
-                    };
+            } catch (fetchErr) {
+                clearTimeout(timeoutId);
 
-                    // Save mock to contentPool too
-                    try {
-                        await saveContentToPool(contentId, contentData);
-                    } catch (e) {
-                        console.error("Error saving mock content:", contentId, e);
-                    }
+                if (fetchErr.name === 'AbortError') {
+                    throw new Error("Request timed out. Please try again.");
+                }
 
-                    return { ...contentData, id: contentId, type: 'new' };
-                }));
+                throw fetchErr;
             }
         } catch (e) {
             if (import.meta.env.DEV) {
-                console.log("Debug: Gemini API ERROR CAUGHT:", e);
+                console.log("Debug: Error generating drills:", e.message);
             }
+
             setError(e.message);
+
             // Fallback to mock data on error
             newDrills = await Promise.all(Array.from({ length: count }).map(async (_, i) => {
                 const contentId = `mock_${Date.now()}_${i}`;
                 const mockData = generateMockDrill(profile, i);
                 const contentData = {
-                    ...mockData,
+                    jp: mockData.jp,
+                    en: mockData.en,
+                    context: mockData.context,
+                    grammar: mockData.grammar,
                     level: profile.levelId,
-                    jobRoles: [normalizeJobRole(profile.job)],
+                    job_roles: [normalizeJobRole(profile.job)],
                     interests: [normalizeInterest(profile.interests)],
-                    grammarPatterns: [],
-                    contexts: [],
-                    created_at: Timestamp.now(),
-                    usageCount: 1,
+                    grammar_patterns: [mockData.grammar],
+                    contexts: [mockData.context],
+                    created_at: new Date().toISOString(),
+                    usage_count: 0,
                     downvotes: 0,
-                    generatedBy: 'mock'
+                    generated_by: 'mock'
                 };
 
                 try {

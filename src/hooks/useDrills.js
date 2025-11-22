@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { collection, doc, getDocs, setDoc, Timestamp, getDoc } from 'firebase/firestore';
-import { db, appId } from '../firebase';
+import { supabase } from '../supabase';
 import { getNextReviewDate } from '../utils';
 
 export function useDrills(user) {
@@ -11,15 +10,27 @@ export function useDrills(user) {
         if (!user) return;
         setLoadingStats(true);
         try {
-            const userDrillsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'userDrills');
-            const snapshot = await getDocs(userDrillsRef);
+            // Fetch all user drills from Supabase
+            const { data: allDrills, error: allError } = await supabase
+                .from('user_drills')
+                .select('*')
+                .eq('user_id', user.id);
+
+            if (allError) throw allError;
+
+            // Count total reviewed and due today
             const now = new Date();
             let due = 0;
-            snapshot.forEach(doc => {
-                const d = doc.data();
-                if (d.nextReviewAt && d.nextReviewAt.toDate() <= now) due++;
-            });
-            setStats({ totalReviewed: snapshot.size, dueToday: due });
+
+            if (allDrills) {
+                allDrills.forEach(drill => {
+                    if (drill.next_review_at && new Date(drill.next_review_at) <= now) {
+                        due++;
+                    }
+                });
+            }
+
+            setStats({ totalReviewed: allDrills?.length || 0, dueToday: due });
         } catch (error) {
             console.error("Error fetching stats:", error);
             setStats({ totalReviewed: 0, dueToday: 0 });
@@ -34,53 +45,53 @@ export function useDrills(user) {
 
     /**
      * Fetches all due drills for the current user
-     * Uses parallel batch reads instead of sequential N+1 queries for optimal performance
+     * Uses single optimized SQL query with JOIN instead of sequential N+1 queries
      * @returns {Promise<Array>} Array of drill objects with content and progress data
-     * @throws {Error} If user is not authenticated or Firestore query fails
+     * @throws {Error} If user is not authenticated or Supabase query fails
      */
     const getDueDrills = useCallback(async () => {
         if (!user) return [];
         try {
-            const userDrillsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'userDrills');
-            const snapshot = await getDocs(userDrillsRef);
-            const now = new Date();
+            const now = new Date().toISOString();
 
-            // Filter due drills first
-            const dueDrillDocs = snapshot.docs.filter(userDrillDoc => {
-                const userDrillData = userDrillDoc.data();
-                return userDrillData.nextReviewAt &&
-                       userDrillData.nextReviewAt.toDate() <= now;
-            });
+            // Single optimized query: JOIN user_drills with content_pool
+            const { data: dueReviews, error } = await supabase
+                .from('user_drills')
+                .select(`
+                    id,
+                    next_review_at,
+                    last_review_at,
+                    last_rating,
+                    review_count,
+                    content_pool:content_id (
+                        id,
+                        jp,
+                        en,
+                        level,
+                        grammar_patterns,
+                        contexts,
+                        downvotes,
+                        generated_by
+                    )
+                `)
+                .eq('user_id', user.id)
+                .lte('next_review_at', now);
 
-            // If no due drills, return early
-            if (dueDrillDocs.length === 0) {
-                return [];
-            }
+            if (error) throw error;
 
-            // Fetch all contentPool data in parallel (batch reads)
-            const contentDataPromises = dueDrillDocs.map(userDrillDoc => {
-                const contentRef = doc(db, 'artifacts', appId, 'contentPool', userDrillDoc.id);
-                return getDoc(contentRef)
-                    .then(contentDocSnapshot => ({
-                        userDrillDoc,
-                        contentDocSnapshot
-                    }))
-                    .catch(err => {
-                        console.error("Error fetching content for due drill:", userDrillDoc.id, err);
-                        return { userDrillDoc, contentDocSnapshot: null };
-                    });
-            });
-
-            const contentResults = await Promise.all(contentDataPromises);
-
-            // Combine results
-            const allDueReviews = contentResults
-                .filter(({ contentDocSnapshot }) => contentDocSnapshot && contentDocSnapshot.exists())
-                .map(({ userDrillDoc, contentDocSnapshot }) => ({
-                    ...contentDocSnapshot.data(),
-                    id: userDrillDoc.id,
+            // Transform to match expected format
+            const allDueReviews = (dueReviews || [])
+                .filter(drill => drill.content_pool !== null)
+                .map(drill => ({
+                    ...drill.content_pool,
+                    id: drill.id,
                     type: 'review',
-                    userProgress: userDrillDoc.data()
+                    userProgress: {
+                        nextReviewAt: drill.next_review_at,
+                        lastReviewedAt: drill.last_review_at,
+                        lastRating: drill.last_rating,
+                        reviewCount: drill.review_count
+                    }
                 }));
 
             return allDueReviews;
@@ -92,14 +103,28 @@ export function useDrills(user) {
 
     const saveDrillResult = useCallback(async (drill, rating) => {
         if (!user) return;
+
+        // Validate rating value
+        const VALID_RATINGS = ['hard', 'soso', 'easy'];
+        if (!VALID_RATINGS.includes(rating)) {
+            console.error('Invalid rating value:', rating);
+            return;
+        }
+
         const nextDate = getNextReviewDate(rating);
         try {
-            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'userDrills', drill.id);
-            await setDoc(docRef, {
-                lastReviewedAt: Timestamp.now(),
-                nextReviewAt: Timestamp.fromDate(nextDate),
-                lastRating: rating,
-            }, { merge: true });
+            const { error } = await supabase
+                .from('user_drills')
+                .update({
+                    last_reviewed_at: new Date().toISOString(),
+                    next_review_at: nextDate.toISOString(),
+                    last_rating: rating,
+                    review_count: (drill.userProgress?.reviewCount || 0) + 1
+                })
+                .eq('id', drill.id)
+                .eq('user_id', user.id);
+
+            if (error) throw error;
         } catch (e) {
             console.error("Error saving drill progress:", e);
             throw e;
@@ -110,11 +135,17 @@ export function useDrills(user) {
         if (!user) return;
         try {
             const nextDate = getNextReviewDate('easy'); // First review in 7 days
-            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'userDrills', contentId);
-            await setDoc(docRef, {
-                nextReviewAt: Timestamp.fromDate(nextDate),
-                createdAt: Timestamp.now(),
-            });
+
+            const { error } = await supabase
+                .from('user_drills')
+                .insert({
+                    user_id: user.id,
+                    content_id: contentId,
+                    next_review_at: nextDate.toISOString(),
+                    created_at: new Date().toISOString()
+                });
+
+            if (error) throw error;
         } catch (e) {
             console.error("Error assigning content to user:", e);
             throw e;
@@ -123,14 +154,36 @@ export function useDrills(user) {
 
     const recordDownvote = useCallback(async (contentId) => {
         try {
-            const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
-            const contentDoc = await getDoc(contentRef);
-            if (contentDoc.exists()) {
-                const currentDownvotes = contentDoc.data().downvotes || 0;
-                await setDoc(contentRef, {
-                    downvotes: currentDownvotes + 1
-                }, { merge: true });
+            // Fetch current downvote count
+            const { data: content, error: fetchError } = await supabase
+                .from('content_pool')
+                .select('downvotes')
+                .eq('id', contentId)
+                .single();
+
+            if (fetchError) throw fetchError;
+
+            const currentDownvotes = content?.downvotes || 0;
+            const maxDownvotes = 1000; // Prevent abuse
+
+            // Only allow increment if under limit
+            if (currentDownvotes >= maxDownvotes) {
+                if (import.meta.env.DEV) {
+                    console.warn('Downvote limit reached for content:', contentId);
+                }
+                return;
             }
+
+            // Increment downvotes
+            const { error: updateError } = await supabase
+                .from('content_pool')
+                .update({
+                    downvotes: currentDownvotes + 1,
+                    last_downvoted_at: new Date().toISOString()
+                })
+                .eq('id', contentId);
+
+            if (updateError) throw updateError;
         } catch (e) {
             console.error("Error recording downvote:", e);
             throw e;

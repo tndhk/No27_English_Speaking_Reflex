@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../firebase';
+import { supabase } from '../supabase';
 
 /**
  * useAuth Hook
- * Handles Firebase authentication with race condition prevention
+ * Handles Supabase authentication with race condition prevention
  * - Sets up auth state listener BEFORE initiating sign-in
- * - Supports both anonymous and custom token authentication
+ * - Supports both anonymous (magic link) and custom token authentication
  * @returns {Object} { user, authStatus, authError }
  */
 export function useAuth() {
@@ -26,6 +25,7 @@ export function useAuth() {
                 if (import.meta.env.DEV) {
                     console.log("Starting auth initialization...");
                 }
+
                 // Check for initial auth token if passed from parent context
                 const initialToken = window.__initial_auth_token;
 
@@ -33,34 +33,59 @@ export function useAuth() {
                     if (import.meta.env.DEV) {
                         console.log("Signing in with custom token...");
                     }
-                    await signInWithCustomToken(auth, initialToken);
+
+                    // Validate token format - Supabase JWTs have 3 parts separated by dots
+                    const tokenParts = initialToken.split('.');
+                    if (tokenParts.length !== 3) {
+                        throw new Error('Invalid custom token format');
+                    }
+
+                    // For custom tokens, use setSession instead
+                    const { error: sessionError } = await supabase.auth.setSession({
+                        access_token: initialToken,
+                        refresh_token: ''
+                    });
+
+                    if (sessionError) {
+                        throw new Error(sessionError.message || 'Failed to set session');
+                    }
                 } else {
                     if (import.meta.env.DEV) {
-                        console.log("Signing in anonymously...");
+                        console.log("Signing in with anonymous session...");
                     }
-                    await signInAnonymously(auth);
+
+                    // For anonymous access, Supabase will use the anon key
+                    // No explicit sign-in needed - auth state listener will catch it
                 }
+
                 if (import.meta.env.DEV) {
-                    console.log("Sign in call completed.");
+                    console.log("Auth initialization completed.");
                 }
             } catch (err) {
                 console.error("Auth initialization error:", err);
                 if (mounted) {
-                    setAuthError(err.message);
+                    setAuthError(err.message || 'Authentication failed');
                     setAuthStatus('error');
                 }
             }
         };
 
         // Register listener FIRST to catch auth state changes
-        const unsubscribe = onAuthStateChanged(auth, (u) => {
+        const {
+            data: { subscription }
+        } = supabase.auth.onAuthStateChange((event, session) => {
             if (import.meta.env.DEV) {
-                console.log("Auth state changed:", u ? "User logged in" : "No user");
+                console.log("Auth state changed:", event, session?.user?.id);
             }
+
             if (mounted) {
-                setUser(u);
-                if (u) {
+                if (session?.user) {
+                    setUser(session.user);
                     setAuthStatus('authenticated');
+                    setAuthError(null);
+                } else {
+                    setUser(null);
+                    setAuthStatus('unauthenticated');
                 }
             }
         });
@@ -71,7 +96,7 @@ export function useAuth() {
         // Cleanup function
         return () => {
             mounted = false;
-            unsubscribe();
+            subscription?.unsubscribe();
         };
     }, []);
 

@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.84.0",
     "clsx": "^2.1.1",
     "firebase": "^12.6.0",
     "lucide-react": "^0.554.0",

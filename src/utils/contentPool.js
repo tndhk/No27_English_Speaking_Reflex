@@ -1,8 +1,7 @@
-import { doc, setDoc, Timestamp } from 'firebase/firestore';
-import { db, appId } from '../firebase';
+import { supabase } from '../supabase';
 
 /**
- * Saves a drill content to the shared contentPool in Firestore
+ * Saves a drill content to the shared contentPool in Supabase
  * Reusable function that eliminates duplicate code in useGemini.js
  *
  * @param {string} contentId - Unique identifier for the content
@@ -10,37 +9,43 @@ import { db, appId } from '../firebase';
  *   - jp: Japanese text
  *   - en: English translation
  *   - level: Proficiency level (beginner/intermediate/advanced)
- *   - jobRoles: Array of job role tags
+ *   - job_roles: Array of job role tags
  *   - interests: Array of interest tags
- *   - grammarPatterns: Array of grammar pattern tags
+ *   - grammar_patterns: Array of grammar pattern tags
  *   - contexts: Array of context tags
  *   - created_at: Timestamp when created
- *   - usageCount: Number of times used
+ *   - usage_count: Number of times used
  *   - downvotes: Number of downvotes received
- *   - generatedBy: Source ('gemini' or 'mock')
+ *   - generated_by: Source ('gemini' or 'mock')
  *
  * @returns {Promise<void>}
- * @throws {Error} If Firestore write fails
+ * @throws {Error} If Supabase write fails
  *
  * @example
  * await saveContentToPool('gen_123456_0.789', {
  *   jp: 'これは例です',
  *   en: 'This is an example',
  *   level: 'intermediate',
- *   jobRoles: ['software_engineer'],
+ *   job_roles: ['software_engineer'],
  *   interests: ['technology'],
- *   grammarPatterns: ['present_simple'],
+ *   grammar_patterns: ['present_simple'],
  *   contexts: ['business_meeting'],
- *   created_at: Timestamp.now(),
- *   usageCount: 1,
+ *   created_at: new Date().toISOString(),
+ *   usage_count: 1,
  *   downvotes: 0,
- *   generatedBy: 'gemini'
+ *   generated_by: 'gemini'
  * });
  */
 export async function saveContentToPool(contentId, contentData) {
   try {
-    const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
-    await setDoc(contentRef, contentData);
+    const { error } = await supabase
+      .from('content_pool')
+      .insert({
+        id: contentId,
+        ...contentData
+      });
+
+    if (error) throw error;
 
     if (import.meta.env.DEV) {
       console.log('Content saved to pool:', contentId);
