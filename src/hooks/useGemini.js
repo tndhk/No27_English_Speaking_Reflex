@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Timestamp, doc, setDoc } from 'firebase/firestore';
-import { db, appId } from '../firebase';
+import { Timestamp } from 'firebase/firestore';
 import { PROFICIENCY_LEVELS, normalizeJobRole, normalizeInterest, getTagsForPrompt } from '../constants/tags';
 import { generateMockDrill } from '../utils';
 import { sanitizeForPrompt } from '../utils/sanitization';
+import { saveContentToPool } from '../utils/contentPool';
 
 export function useGemini() {
     const [loading, setLoading] = useState(false);
@@ -120,12 +120,11 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
                         generatedBy: 'gemini'
                     };
 
-                    // Save to contentPool
+                    // Save to contentPool using reusable utility
                     try {
-                        const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
-                        await setDoc(contentRef, contentData);
+                        await saveContentToPool(contentId, contentData);
                     } catch (e) {
-                        console.error("Error saving to contentPool:", e);
+                        console.error("Error saving generated content:", contentId, e);
                     }
 
                     return {
@@ -154,10 +153,9 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
 
                     // Save mock to contentPool too
                     try {
-                        const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
-                        await setDoc(contentRef, contentData);
+                        await saveContentToPool(contentId, contentData);
                     } catch (e) {
-                        console.error("Error saving mock to contentPool:", e);
+                        console.error("Error saving mock content:", contentId, e);
                     }
 
                     return { ...contentData, id: contentId, type: 'new' };
@@ -186,10 +184,9 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
                 };
 
                 try {
-                    const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
-                    await setDoc(contentRef, contentData);
+                    await saveContentToPool(contentId, contentData);
                 } catch (e) {
-                    console.error("Error saving mock to contentPool:", e);
+                    console.error("Error saving fallback mock content:", contentId, e);
                 }
 
                 return { ...contentData, id: contentId, type: 'new' };
