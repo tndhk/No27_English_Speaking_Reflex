@@ -1,7 +1,33 @@
 import React from 'react';
 import { Volume2, Zap, Sparkles, ThumbsDown } from 'lucide-react';
 
+/**
+ * FlipCard Component
+ * Interactive 3D flip card for displaying drill content
+ * Shows Japanese on front, English translation on back
+ *
+ * @prop {Object} drill - Drill data object { jp, en, context, grammar }
+ * @prop {boolean} isRevealed - Whether card is flipped to show back
+ * @prop {function} onReveal - Callback when card is clicked to flip
+ * @prop {function} onPlayAudio - Callback to play audio pronunciation
+ * @prop {function} [onDownvote] - Optional callback for downvote button
+ */
 const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio, onDownvote }) => {
+    // Guard clause: return nothing if drill data is missing
+    if (!drill) {
+        return (
+            <div className="w-full max-w-sm h-96 bg-red-500/20 border border-red-500/30 rounded-3xl flex items-center justify-center">
+                <p className="text-red-400 text-center">No drill data available</p>
+            </div>
+        );
+    }
+
+    // Ensure required properties exist
+    const jpText = drill.jp || 'N/A';
+    const enText = drill.en || 'N/A';
+    const contextText = drill.context || 'General';
+    const grammarText = drill.grammar || 'Grammar pattern';
+
     return (
         <div className="relative w-full max-w-sm aspect-[4/5] perspective-1000 group cursor-pointer" onClick={!isRevealed ? onReveal : undefined}>
             <div className={`w-full h-full transition-all duration-500 transform-style-3d ${isRevealed ? 'rotate-y-180' : ''}`}>
@@ -13,7 +39,7 @@ const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio, onDownvote }) => {
                             Translate
                         </div>
                         <h2 className="text-3xl md:text-4xl font-bold text-white text-center leading-relaxed drop-shadow-md">
-                            {drill.jp}
+                            {jpText}
                         </h2>
                         <div className="mt-12 flex flex-col items-center gap-2 opacity-60 animate-pulse">
                             <Zap size={24} className="text-yellow-300" />
@@ -29,13 +55,13 @@ const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio, onDownvote }) => {
 
                         <div className="w-full flex justify-center mt-4">
                             <span className="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold uppercase tracking-wide">
-                                {drill.context}
+                                {contextText}
                             </span>
                         </div>
 
                         <div className="flex-1 flex flex-col items-center justify-center w-full z-10">
                             <h2 className="text-2xl md:text-3xl font-bold text-slate-800 text-center leading-relaxed mb-6">
-                                {drill.en}
+                                {enText}
                             </h2>
                             <button
                                 onClick={(e) => { e.stopPropagation(); onPlayAudio(); }}
@@ -51,7 +77,7 @@ const FlipCard = ({ drill, isRevealed, onReveal, onPlayAudio, onDownvote }) => {
                                     <Sparkles size={14} className="text-amber-500" />
                                     <span className="text-xs font-bold text-slate-400 uppercase">Key Point</span>
                                 </div>
-                                <p className="text-sm font-medium text-slate-600">{drill.grammar}</p>
+                                <p className="text-sm font-medium text-slate-600">{grammarText}</p>
                             </div>
                             {onDownvote && (
                                 <button

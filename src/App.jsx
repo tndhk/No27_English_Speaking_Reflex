@@ -51,10 +51,9 @@ export default function App() {
             // Only generate if we have remaining slots
             if (slotsRemaining > 0) {
                 newDrills = await generateAndSaveDrills(slotsRemaining, profile);
-                // Assign generated content to user
-                for (const drill of newDrills) {
-                    await assignContentToUser(drill.id);
-                }
+                // Assign generated content to user in parallel (not sequential)
+                // This reduces wait time from O(n) to O(1) for assignments
+                await Promise.all(newDrills.map(drill => assignContentToUser(drill.id)));
             }
 
             const queue = [...reviewsToTake, ...newDrills];

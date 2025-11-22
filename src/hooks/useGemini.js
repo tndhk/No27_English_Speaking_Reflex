@@ -45,21 +45,37 @@ Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammar
                 if (import.meta.env.DEV) {
                     console.log("Debug: Starting fetch to Gemini...");
                 }
-                const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: "Generate." }] }],
-                            systemInstruction: { parts: [{ text: systemPrompt }] },
-                            generationConfig: { responseMimeType: "application/json" }
-                        })
-                    }
-                );
 
-                if (import.meta.env.DEV) {
-                    console.log("Debug: Fetch completed. Status:", response.status);
+                // Set up AbortController for timeout (15 seconds max)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                let response;
+                try {
+                    response = await fetch(
+                        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: "Generate." }] }],
+                                systemInstruction: { parts: [{ text: systemPrompt }] },
+                                generationConfig: { responseMimeType: "application/json" }
+                            }),
+                            signal: controller.signal
+                        }
+                    );
+                    clearTimeout(timeoutId);
+
+                    if (import.meta.env.DEV) {
+                        console.log("Debug: Fetch completed. Status:", response.status);
+                    }
+                } catch (fetchErr) {
+                    clearTimeout(timeoutId);
+                    if (fetchErr.name === 'AbortError') {
+                        throw new Error("API request timed out. Please try again.");
+                    }
+                    throw fetchErr;
                 }
 
                 if (!response.ok) {

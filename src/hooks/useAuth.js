@@ -2,12 +2,25 @@ import { useState, useEffect } from 'react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../firebase';
 
+/**
+ * useAuth Hook
+ * Handles Firebase authentication with race condition prevention
+ * - Sets up auth state listener BEFORE initiating sign-in
+ * - Supports both anonymous and custom token authentication
+ * @returns {Object} { user, authStatus, authError }
+ */
 export function useAuth() {
     const [user, setUser] = useState(null);
     const [authStatus, setAuthStatus] = useState('loading'); // 'loading', 'authenticated', 'error'
     const [authError, setAuthError] = useState(null);
 
     useEffect(() => {
+        let mounted = true; // Track if component is mounted to prevent state updates after unmount
+
+        /**
+         * Initializes authentication
+         * Called AFTER onAuthStateChanged listener is registered to prevent race conditions
+         */
         const initAuth = async () => {
             try {
                 if (import.meta.env.DEV) {
@@ -32,23 +45,34 @@ export function useAuth() {
                 }
             } catch (err) {
                 console.error("Auth initialization error:", err);
-                setAuthError(err.message);
-                setAuthStatus('error');
+                if (mounted) {
+                    setAuthError(err.message);
+                    setAuthStatus('error');
+                }
             }
         };
 
+        // Register listener FIRST to catch auth state changes
         const unsubscribe = onAuthStateChanged(auth, (u) => {
             if (import.meta.env.DEV) {
                 console.log("Auth state changed:", u ? "User logged in" : "No user");
             }
-            setUser(u);
-            if (u) {
-                setAuthStatus('authenticated');
+            if (mounted) {
+                setUser(u);
+                if (u) {
+                    setAuthStatus('authenticated');
+                }
             }
         });
 
+        // Initialize auth AFTER listener is registered (prevents race condition)
         initAuth();
-        return () => unsubscribe();
+
+        // Cleanup function
+        return () => {
+            mounted = false;
+            unsubscribe();
+        };
     }, []);
 
     return { user, authStatus, authError };

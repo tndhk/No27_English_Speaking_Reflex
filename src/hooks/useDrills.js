@@ -32,35 +32,57 @@ export function useDrills(user) {
         fetchStats();
     }, [fetchStats]);
 
+    /**
+     * Fetches all due drills for the current user
+     * Uses parallel batch reads instead of sequential N+1 queries for optimal performance
+     * @returns {Promise<Array>} Array of drill objects with content and progress data
+     * @throws {Error} If user is not authenticated or Firestore query fails
+     */
     const getDueDrills = useCallback(async () => {
         if (!user) return [];
         try {
             const userDrillsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'userDrills');
             const snapshot = await getDocs(userDrillsRef);
             const now = new Date();
-            const allDueReviews = [];
 
-            // Fetch full content details from contentPool
-            for (const userDrillDoc of snapshot.docs) {
+            // Filter due drills first
+            const dueDrillDocs = snapshot.docs.filter(userDrillDoc => {
                 const userDrillData = userDrillDoc.data();
-                if (userDrillData.nextReviewAt && userDrillData.nextReviewAt.toDate() <= now) {
-                    try {
-                        const contentRef = doc(db, 'artifacts', appId, 'contentPool', userDrillDoc.id);
-                        const contentDocSnapshot = await getDoc(contentRef);
-                        if (contentDocSnapshot.exists()) {
-                            const contentData = contentDocSnapshot.data();
-                            allDueReviews.push({
-                                ...contentData,
-                                id: userDrillDoc.id,
-                                type: 'review',
-                                userProgress: userDrillData
-                            });
-                        }
-                    } catch (err) {
-                        console.error("Error fetching content for due drill:", err);
-                    }
-                }
+                return userDrillData.nextReviewAt &&
+                       userDrillData.nextReviewAt.toDate() <= now;
+            });
+
+            // If no due drills, return early
+            if (dueDrillDocs.length === 0) {
+                return [];
             }
+
+            // Fetch all contentPool data in parallel (batch reads)
+            const contentDataPromises = dueDrillDocs.map(userDrillDoc => {
+                const contentRef = doc(db, 'artifacts', appId, 'contentPool', userDrillDoc.id);
+                return getDoc(contentRef)
+                    .then(contentDocSnapshot => ({
+                        userDrillDoc,
+                        contentDocSnapshot
+                    }))
+                    .catch(err => {
+                        console.error("Error fetching content for due drill:", userDrillDoc.id, err);
+                        return { userDrillDoc, contentDocSnapshot: null };
+                    });
+            });
+
+            const contentResults = await Promise.all(contentDataPromises);
+
+            // Combine results
+            const allDueReviews = contentResults
+                .filter(({ contentDocSnapshot }) => contentDocSnapshot && contentDocSnapshot.exists())
+                .map(({ userDrillDoc, contentDocSnapshot }) => ({
+                    ...contentDocSnapshot.data(),
+                    id: userDrillDoc.id,
+                    type: 'review',
+                    userProgress: userDrillDoc.data()
+                }));
+
             return allDueReviews;
         } catch (error) {
             console.error("Error fetching due drills:", error);
