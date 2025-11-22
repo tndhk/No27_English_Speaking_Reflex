@@ -10,18 +10,26 @@ export function useAuth() {
     useEffect(() => {
         const initAuth = async () => {
             try {
-                console.log("Starting auth initialization...");
+                if (import.meta.env.DEV) {
+                    console.log("Starting auth initialization...");
+                }
                 // Check for initial auth token if passed from parent context
                 const initialToken = window.__initial_auth_token;
 
                 if (initialToken) {
-                    console.log("Signing in with custom token...");
+                    if (import.meta.env.DEV) {
+                        console.log("Signing in with custom token...");
+                    }
                     await signInWithCustomToken(auth, initialToken);
                 } else {
-                    console.log("Signing in anonymously...");
+                    if (import.meta.env.DEV) {
+                        console.log("Signing in anonymously...");
+                    }
                     await signInAnonymously(auth);
                 }
-                console.log("Sign in call completed.");
+                if (import.meta.env.DEV) {
+                    console.log("Sign in call completed.");
+                }
             } catch (err) {
                 console.error("Auth initialization error:", err);
                 setAuthError(err.message);
@@ -30,7 +38,9 @@ export function useAuth() {
         };
 
         const unsubscribe = onAuthStateChanged(auth, (u) => {
-            console.log("Auth state changed:", u ? "User logged in" : "No user");
+            if (import.meta.env.DEV) {
+                console.log("Auth state changed:", u ? "User logged in" : "No user");
+            }
             setUser(u);
             if (u) {
                 setAuthStatus('authenticated');

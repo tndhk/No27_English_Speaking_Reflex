@@ -6,6 +6,7 @@ import Completion from './components/Completion';
 import { useAuth } from './hooks/useAuth';
 import { useDrills } from './hooks/useDrills';
 import { useGemini } from './hooks/useGemini';
+import { sanitizeForSpeech } from './utils/sanitization';
 
 export default function App() {
     const { user, authStatus, authError } = useAuth();
@@ -36,12 +37,14 @@ export default function App() {
             const reviewsToTake = allDueReviews.slice(0, targetCount);
             const slotsRemaining = targetCount - reviewsToTake.length;
 
-            console.log("Debug: Session Start", {
-                targetCount,
-                reviewsFound: allDueReviews.length,
-                reviewsToTake: reviewsToTake.length,
-                slotsRemaining
-            });
+            if (import.meta.env.DEV) {
+                console.log("Debug: Session Start", {
+                    targetCount,
+                    reviewsFound: allDueReviews.length,
+                    reviewsToTake: reviewsToTake.length,
+                    slotsRemaining
+                });
+            }
 
             let newDrills = [];
 
@@ -74,8 +77,10 @@ export default function App() {
 
     const playAudio = (text) => {
         if (!text) return;
+        const sanitizedText = sanitizeForSpeech(text);
+        if (!sanitizedText) return;
         window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
+        const u = new SpeechSynthesisUtterance(sanitizedText);
         u.lang = 'en-US';
         window.speechSynthesis.speak(u);
     };
