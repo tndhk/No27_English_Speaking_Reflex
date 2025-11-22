@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Timestamp } from 'firebase/firestore';
-import { LEVELS } from '../components/Dashboard';
+import { Timestamp, doc, setDoc } from 'firebase/firestore';
+import { db, appId } from '../firebase';
+import { PROFICIENCY_LEVELS, normalizeJobRole, normalizeInterest, getTagsForPrompt } from '../constants/tags';
 import { generateMockDrill } from '../utils';
 
 export function useGemini() {
@@ -8,7 +9,7 @@ export function useGemini() {
     const [error, setError] = useState(null);
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
-    const generateDrills = async (count, profile) => {
+    const generateAndSaveDrills = async (count, profile) => {
         setLoading(true);
         setError(null);
         let newDrills = [];
@@ -16,8 +17,18 @@ export function useGemini() {
         try {
             if (apiKey) {
                 console.log("Debug: Attempting generation with Gemini...");
-                const selectedLevel = LEVELS.find(l => l.id === profile.levelId);
-                const systemPrompt = `Generate ${count} pairs of Japanese/English sentences for a ${profile.job} interested in ${profile.interests}. Level: ${selectedLevel.label}. Constraints: ${selectedLevel.promptInstruction} Rules: JSON Array of objects with keys "en" (English) and "jp" (Japanese).`;
+                const selectedLevel = PROFICIENCY_LEVELS[profile.levelId];
+                const tagsInfo = getTagsForPrompt();
+
+                const systemPrompt = `Generate ${count} pairs of Japanese/English sentences for a ${profile.job} interested in ${profile.interests}.
+Level: ${selectedLevel.label}.
+Constraints: ${selectedLevel.promptInstruction}
+
+IMPORTANT: For each pair, also provide these tags:
+- grammarPatterns: array of 1-2 from [${tagsInfo.grammarPatterns.join(', ')}]
+- contexts: array of 1-2 from [${tagsInfo.contexts.join(', ')}]
+
+Rules: JSON Array of objects with keys "en" (English), "jp" (Japanese), "grammarPatterns" (array), "contexts" (array).`;
 
                 console.log("Debug: Starting fetch to Gemini...");
                 const response = await fetch(
@@ -55,24 +66,94 @@ export function useGemini() {
                 rawText = rawText.replace(/```json\n?|```/g, '').trim();
 
                 const generated = JSON.parse(rawText);
-                newDrills = generated.map(item => ({
-                    ...item,
-                    // Handle potential key variations
-                    en: item.en || item.english,
-                    jp: item.jp || item.japanese,
-                    id: `gen_${Date.now()}_${Math.random()}`,
-                    type: 'new',
-                    created_at: Timestamp.now()
+                newDrills = await Promise.all(generated.map(async (item) => {
+                    const contentId = `gen_${Date.now()}_${Math.random()}`;
+                    const contentData = {
+                        jp: item.jp || item.japanese,
+                        en: item.en || item.english,
+                        level: profile.levelId,
+                        jobRoles: [normalizeJobRole(profile.job)],
+                        interests: [normalizeInterest(profile.interests)],
+                        grammarPatterns: item.grammarPatterns || [],
+                        contexts: item.contexts || [],
+                        created_at: Timestamp.now(),
+                        usageCount: 1,
+                        downvotes: 0,
+                        generatedBy: 'gemini'
+                    };
+
+                    // Save to contentPool
+                    try {
+                        const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
+                        await setDoc(contentRef, contentData);
+                    } catch (e) {
+                        console.error("Error saving to contentPool:", e);
+                    }
+
+                    return {
+                        ...contentData,
+                        id: contentId,
+                        type: 'new'
+                    };
                 }));
             } else {
                 // No API key, fallback to mock
-                newDrills = Array.from({ length: count }).map((_, i) => ({ ...generateMockDrill(profile, i), id: `mock_${i}`, type: 'new' }));
+                newDrills = await Promise.all(Array.from({ length: count }).map(async (_, i) => {
+                    const contentId = `mock_${Date.now()}_${i}`;
+                    const mockData = generateMockDrill(profile, i);
+                    const contentData = {
+                        ...mockData,
+                        level: profile.levelId,
+                        jobRoles: [normalizeJobRole(profile.job)],
+                        interests: [normalizeInterest(profile.interests)],
+                        grammarPatterns: [],
+                        contexts: [],
+                        created_at: Timestamp.now(),
+                        usageCount: 1,
+                        downvotes: 0,
+                        generatedBy: 'mock'
+                    };
+
+                    // Save mock to contentPool too
+                    try {
+                        const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
+                        await setDoc(contentRef, contentData);
+                    } catch (e) {
+                        console.error("Error saving mock to contentPool:", e);
+                    }
+
+                    return { ...contentData, id: contentId, type: 'new' };
+                }));
             }
         } catch (e) {
             console.log("Debug: Gemini API ERROR CAUGHT:", e);
             setError(e.message);
             // Fallback to mock data on error
-            newDrills = Array.from({ length: count }).map((_, i) => ({ ...generateMockDrill(profile, i), id: `mock_${i}`, type: 'new' }));
+            newDrills = await Promise.all(Array.from({ length: count }).map(async (_, i) => {
+                const contentId = `mock_${Date.now()}_${i}`;
+                const mockData = generateMockDrill(profile, i);
+                const contentData = {
+                    ...mockData,
+                    level: profile.levelId,
+                    jobRoles: [normalizeJobRole(profile.job)],
+                    interests: [normalizeInterest(profile.interests)],
+                    grammarPatterns: [],
+                    contexts: [],
+                    created_at: Timestamp.now(),
+                    usageCount: 1,
+                    downvotes: 0,
+                    generatedBy: 'mock'
+                };
+
+                try {
+                    const contentRef = doc(db, 'artifacts', appId, 'contentPool', contentId);
+                    await setDoc(contentRef, contentData);
+                } catch (e) {
+                    console.error("Error saving mock to contentPool:", e);
+                }
+
+                return { ...contentData, id: contentId, type: 'new' };
+            }));
         } finally {
             setLoading(false);
         }
@@ -80,5 +161,5 @@ export function useGemini() {
         return newDrills;
     };
 
-    return { generateDrills, loading, error };
+    return { generateAndSaveDrills, loading, error };
 }
