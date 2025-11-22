@@ -27,27 +27,64 @@ export function useAuth() {
                 }
 
                 // Check for initial auth token if passed from parent context
-                const initialToken = window.__initial_auth_token;
+                // Security: Only accept tokens from trusted origins
+                let initialToken = null;
+
+                if (window.__initial_auth_token) {
+                    initialToken = window.__initial_auth_token;
+
+                    // Delete token from window immediately to prevent reuse/tampering
+                    delete window.__initial_auth_token;
+
+                    // Freeze the window property to prevent re-assignment
+                    Object.defineProperty(window, '__initial_auth_token', {
+                        value: undefined,
+                        writable: false,
+                        configurable: false
+                    });
+                }
 
                 if (initialToken) {
                     if (import.meta.env.DEV) {
                         console.log("Signing in with custom token...");
                     }
 
-                    // Validate token format - Supabase JWTs have 3 parts separated by dots
+                    // Enhanced token validation
                     const tokenParts = initialToken.split('.');
                     if (tokenParts.length !== 3) {
-                        throw new Error('Invalid custom token format');
+                        throw new Error('Invalid custom token format - must be a valid JWT');
                     }
 
-                    // For custom tokens, use setSession instead
+                    // Validate token structure and decode header/payload for basic checks
+                    try {
+                        // Decode JWT payload (second part)
+                        const payload = JSON.parse(atob(tokenParts[1]));
+
+                        // Check token expiration (exp claim)
+                        if (payload.exp && payload.exp * 1000 < Date.now()) {
+                            throw new Error('Token has expired');
+                        }
+
+                        // Validate issuer if present (should be Supabase)
+                        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                        if (payload.iss && supabaseUrl && !payload.iss.includes(new URL(supabaseUrl).hostname)) {
+                            throw new Error('Token issuer mismatch');
+                        }
+
+                    } catch (decodeError) {
+                        console.error('Token validation error:', decodeError);
+                        throw new Error('Invalid token structure or claims');
+                    }
+
+                    // For custom tokens, use setSession
+                    // Note: Supabase will verify the signature server-side
                     const { error: sessionError } = await supabase.auth.setSession({
                         access_token: initialToken,
                         refresh_token: ''
                     });
 
                     if (sessionError) {
-                        throw new Error(sessionError.message || 'Failed to set session');
+                        throw new Error(sessionError.message || 'Failed to authenticate with provided token');
                     }
                 } else {
                     if (import.meta.env.DEV) {

@@ -14,30 +14,92 @@
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const GEMINI_TIMEOUT_MS = 15000;
 
+// Rate limiting configuration
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 10; // 10 requests per minute per IP
+const rateLimitStore = new Map();
+
 /**
- * Validates and sanitizes prompt for injection prevention
+ * Simple in-memory rate limiter
+ * In production, consider using Redis or Vercel KV for distributed rate limiting
+ */
+function checkRateLimit(identifier) {
+    const now = Date.now();
+    const windowStart = now - RATE_LIMIT_WINDOW_MS;
+
+    // Get or initialize request log for this identifier
+    let requests = rateLimitStore.get(identifier) || [];
+
+    // Remove expired entries
+    requests = requests.filter(timestamp => timestamp > windowStart);
+
+    // Check if limit exceeded
+    if (requests.length >= RATE_LIMIT_MAX_REQUESTS) {
+        return {
+            allowed: false,
+            remainingRequests: 0,
+            resetTime: requests[0] + RATE_LIMIT_WINDOW_MS
+        };
+    }
+
+    // Add current request
+    requests.push(now);
+    rateLimitStore.set(identifier, requests);
+
+    // Cleanup old entries periodically (prevent memory leak)
+    if (rateLimitStore.size > 10000) {
+        const entriesToDelete = [];
+        for (const [key, timestamps] of rateLimitStore.entries()) {
+            if (timestamps.every(t => t < windowStart)) {
+                entriesToDelete.push(key);
+            }
+        }
+        entriesToDelete.forEach(key => rateLimitStore.delete(key));
+    }
+
+    return {
+        allowed: true,
+        remainingRequests: RATE_LIMIT_MAX_REQUESTS - requests.length,
+        resetTime: now + RATE_LIMIT_WINDOW_MS
+    };
+}
+
+/**
+ * Validates and sanitizes prompt input using whitelist approach
+ * This prevents prompt injection and XSS attacks
+ * @param {string} input - User input to sanitize
+ * @param {number} maxLength - Maximum allowed length
+ * @returns {string} Sanitized input or empty string if invalid
  */
 function sanitizePromptInput(input, maxLength = 500) {
     if (!input || typeof input !== 'string') return '';
 
-    let sanitized = input.slice(0, maxLength);
+    let sanitized = input.slice(0, maxLength).trim();
 
-    // Remove HTML/script dangerous chars
-    sanitized = sanitized.replace(/[<>{}[\]\\\/`\0\x00-\x1f\x7f]/g, '');
+    // Whitelist approach: Only allow safe characters
+    // Allows: a-z, A-Z, 0-9, spaces, hyphens, periods, commas, apostrophes, parentheses, ampersands
+    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-.,()\'&]/g, '');
 
-    // Remove instruction-like patterns
+    // Remove instruction-like patterns that could cause prompt injection
     const dangerousPatterns = [
-        /\b(ignore|disregard|forget|system|instruction|prompt|override|previous|new|now|instead|act\s+as|you\s+are|pretend)\b/gi,
-        /[.。]\s*[A-Z]/g,
-        /:{2,}|={2,}|-{3,}/g,
+        /\b(ignore|disregard|forget|system|instruction|prompt|override|previous|new|now|instead|act\s+as|you\s+are|pretend|role|behave)\b/gi,
+        /:{2,}/g,   // Multiple colons
+        /={2,}/g,   // Multiple equals
+        /-{3,}/g,   // Multiple hyphens
+        /\.\s*[A-Z]/g,  // Sentence boundaries (potential instruction injection)
     ];
 
     dangerousPatterns.forEach(pattern => {
         sanitized = sanitized.replace(pattern, ' ');
     });
 
+    // Remove control characters and newlines
+    sanitized = sanitized.replace(/[\n\r\t\0\x00-\x1f\x7f]/g, ' ');
+
+    // Collapse multiple spaces
     sanitized = sanitized.replace(/\s+/g, ' ').trim();
 
+    // Validate length
     if (sanitized.length < 2 || sanitized.length > maxLength) {
         return '';
     }
@@ -46,9 +108,34 @@ function sanitizePromptInput(input, maxLength = 500) {
 }
 
 export default async function handler(req, res) {
+    // Handle CORS preflight requests
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     // Only allow POST requests
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // Rate limiting check
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0] ||
+                     req.headers['x-real-ip'] ||
+                     req.socket.remoteAddress ||
+                     'unknown';
+
+    const rateLimitResult = checkRateLimit(clientIp);
+
+    // Add rate limit headers to response
+    res.setHeader('X-RateLimit-Limit', RATE_LIMIT_MAX_REQUESTS.toString());
+    res.setHeader('X-RateLimit-Remaining', rateLimitResult.remainingRequests.toString());
+    res.setHeader('X-RateLimit-Reset', new Date(rateLimitResult.resetTime).toISOString());
+
+    if (!rateLimitResult.allowed) {
+        return res.status(429).json({
+            error: 'Too many requests. Please try again later.',
+            retryAfter: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000)
+        });
     }
 
     try {
